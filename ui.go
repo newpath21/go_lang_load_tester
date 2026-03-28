@@ -142,3 +142,95 @@ func formatDuration(d time.Duration) string {
 	}
 	return fmt.Sprintf("%.2fs", d.Seconds())
 }
+
+// PrintScenarioBanner displays the scenario load test header.
+func PrintScenarioBanner(scenario *Scenario) {
+	fmt.Println("══════════════════════════════════════════")
+	fmt.Println(" Go Load Tester — Scenario Mode")
+	fmt.Println("══════════════════════════════════════════")
+	fmt.Printf("Scenario:    %s\n", scenario.Name)
+	fmt.Printf("Base URL:    %s\n", scenario.BaseURL)
+	fmt.Printf("Steps:       %d\n", len(scenario.Steps))
+	for i, step := range scenario.Steps {
+		fmt.Printf("  %d. %s [%s]\n", i+1, step.Name, step.Method)
+	}
+	fmt.Printf("Concurrency: %d\n", scenario.Concurrency)
+	fmt.Printf("Iterations:  %d\n", scenario.Iterations)
+	fmt.Println("══════════════════════════════════════════")
+}
+
+// PrintScenarioSummary displays the overall and per-step results.
+func PrintScenarioSummary(overall Summary, scenario *Scenario, stepStats map[string]*Stats) {
+	fmt.Println()
+	fmt.Println("══════════════════════════════════════════")
+	fmt.Println(" Overall Results")
+	fmt.Println("══════════════════════════════════════════")
+	fmt.Printf("Total Requests:    %d\n", overall.TotalRequests)
+	fmt.Printf("Successful:        %d\n", overall.SuccessCount)
+	fmt.Printf("Failed:            %d\n", overall.FailCount)
+	fmt.Printf("Total Time:        %s\n", formatDuration(overall.TotalTime))
+	fmt.Printf("Requests/sec:      %.2f\n", overall.RequestsPerSec)
+	fmt.Printf("Avg Latency:       %s\n", formatDuration(overall.AvgDuration))
+	fmt.Printf("P50:               %s\n", formatDuration(overall.P50))
+	fmt.Printf("P95:               %s\n", formatDuration(overall.P95))
+	fmt.Printf("P99:               %s\n", formatDuration(overall.P99))
+
+	if len(overall.StatusCodes) > 0 {
+		fmt.Println()
+		fmt.Println("Status Code Distribution:")
+		for code, count := range overall.StatusCodes {
+			fmt.Printf("  [%d] %d responses\n", code, count)
+		}
+	}
+
+	// Per-step breakdown — iterate scenario.Steps for consistent ordering.
+	fmt.Println()
+	fmt.Println("══════════════════════════════════════════")
+	fmt.Println(" Per-Step Breakdown")
+	fmt.Println("══════════════════════════════════════════")
+
+	for i, step := range scenario.Steps {
+		ss, ok := stepStats[step.Name]
+		if !ok {
+			continue
+		}
+		stepSummary := ss.GetSummary()
+		fmt.Printf("\n  Step %d: %s [%s]\n", i+1, step.Name, step.Method)
+		fmt.Printf("    Requests:  %d (ok: %d, fail: %d)\n", stepSummary.TotalRequests, stepSummary.SuccessCount, stepSummary.FailCount)
+		fmt.Printf("    Avg:       %s\n", formatDuration(stepSummary.AvgDuration))
+		fmt.Printf("    P50:       %s | P95: %s | P99: %s\n", formatDuration(stepSummary.P50), formatDuration(stepSummary.P95), formatDuration(stepSummary.P99))
+		if len(stepSummary.StatusCodes) > 0 {
+			fmt.Printf("    Status:    ")
+			first := true
+			for code, count := range stepSummary.StatusCodes {
+				if !first {
+					fmt.Printf(", ")
+				}
+				fmt.Printf("[%d]=%d", code, count)
+				first = false
+			}
+			fmt.Println()
+		}
+		if len(stepSummary.Errors) > 0 {
+			fmt.Printf("    Errors:\n")
+			for _, e := range stepSummary.Errors {
+				fmt.Printf("      - %s\n", e)
+			}
+			if stepSummary.TotalErrors > len(stepSummary.Errors) {
+				fmt.Printf("      ... and %d more\n", stepSummary.TotalErrors-len(stepSummary.Errors))
+			}
+		}
+	}
+
+	// Overall errors at the bottom.
+	if len(overall.Errors) > 0 {
+		fmt.Println()
+		fmt.Println("Errors:")
+		for _, e := range overall.Errors {
+			fmt.Printf("  - %s\n", e)
+		}
+		if overall.TotalErrors > len(overall.Errors) {
+			fmt.Printf("  ... and %d more errors\n", overall.TotalErrors-len(overall.Errors))
+		}
+	}
+}

@@ -14,13 +14,14 @@ import (
 
 // Config holds all configuration for a load test run.
 type Config struct {
-	URL         string            // Target URL to test
-	NumRequests int               // Total number of requests to send
-	Concurrency int               // Number of concurrent workers
-	Method      string            // HTTP method: GET, POST, PUT, DELETE
-	Timeout     time.Duration     // Per-request timeout
-	Headers     map[string]string // Custom HTTP headers
-	Body        string            // Request body for POST/PUT
+	URL          string            // Target URL to test
+	NumRequests  int               // Total number of requests to send
+	Concurrency  int               // Number of concurrent workers
+	Method       string            // HTTP method: GET, POST, PUT, DELETE
+	Timeout      time.Duration     // Per-request timeout
+	Headers      map[string]string // Custom HTTP headers
+	Body         string            // Request body for POST/PUT
+	ScenarioFile string            // Path to scenario JSON file (multi-step mode)
 
 	// BodyTemplate is the parsed template for the request body. When it
 	// contains dynamic placeholders, each request gets a unique body.
@@ -57,6 +58,7 @@ func ParseConfig() (*Config, error) {
 	method := fs.String("method", "GET", "HTTP method: GET, POST, PUT, DELETE")
 	timeout := fs.String("timeout", "10s", "Per-request timeout (e.g. 5s, 500ms)")
 	body := fs.String("body", "", "Request body for POST/PUT requests")
+	scenarioFile := fs.String("scenario", "", "Path to scenario JSON file for multi-step load testing")
 
 	var headers headerFlags
 	fs.Var(&headers, "header", "Custom header in 'Key: Value' format (can be repeated)")
@@ -66,6 +68,18 @@ func ParseConfig() (*Config, error) {
 	}
 
 	// --- Validation ---
+
+	// Scenario mode: only need timeout, skip URL/method/body validation.
+	if *scenarioFile != "" {
+		dur, err := time.ParseDuration(*timeout)
+		if err != nil {
+			return nil, fmt.Errorf("validation error: invalid -timeout value %q: %w", *timeout, err)
+		}
+		return &Config{
+			ScenarioFile: *scenarioFile,
+			Timeout:      dur,
+		}, nil
+	}
 
 	// URL is required.
 	if *urlFlag == "" {

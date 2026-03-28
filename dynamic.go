@@ -19,13 +19,14 @@ import (
 // request within the load test run.
 type generatorFunc func(requestIndex int) string
 
-// templateSegment represents either a static text fragment or a dynamic
-// placeholder within a parsed template. Exactly one of staticText or
-// generator is used per segment.
+// templateSegment represents either a static text fragment, a dynamic
+// placeholder, or a variable lookup within a parsed template. Exactly one
+// of staticText, generator, or varName is used per segment.
 type templateSegment struct {
 	staticText string
 	generator  generatorFunc
 	name       string // placeholder name (e.g. "$uuid"), empty for static segments
+	varName    string // variable name for {{.varName}} lookups, empty for non-var segments
 }
 
 // Template is a parsed template that can efficiently render per-request
@@ -131,20 +132,34 @@ func ParseTemplate(raw string) (*Template, error) {
 
 		// Extract the placeholder (e.g. "$sequence(1,3)" from "{{$sequence(1,3)}}").
 		rawPlaceholder := strings.TrimSpace(remaining[openIdx+2 : closeIdx])
-		baseName, params, err := splitPlaceholder(rawPlaceholder)
-		if err != nil {
-			return nil, fmt.Errorf("parsing template: %w", err)
-		}
-		name := baseName
-		gen, err := lookupGenerator(baseName, params)
-		if err != nil {
-			return nil, fmt.Errorf("parsing template: %w", err)
-		}
 
-		t.segments = append(t.segments, templateSegment{generator: gen, name: name})
-		if !seen[name] {
-			seen[name] = true
-			t.placeholders = append(t.placeholders, name)
+		if strings.HasPrefix(rawPlaceholder, ".") {
+			// Variable lookup: {{.varName}} — resolved at render time from vars map.
+			vName := rawPlaceholder[1:] // strip leading "."
+			if vName == "" {
+				return nil, fmt.Errorf("parsing template: empty variable name in {{.}}")
+			}
+			t.segments = append(t.segments, templateSegment{varName: vName, name: rawPlaceholder})
+			if !seen[rawPlaceholder] {
+				seen[rawPlaceholder] = true
+				t.placeholders = append(t.placeholders, rawPlaceholder)
+			}
+		} else {
+			baseName, params, err := splitPlaceholder(rawPlaceholder)
+			if err != nil {
+				return nil, fmt.Errorf("parsing template: %w", err)
+			}
+			name := baseName
+			gen, err := lookupGenerator(baseName, params)
+			if err != nil {
+				return nil, fmt.Errorf("parsing template: %w", err)
+			}
+
+			t.segments = append(t.segments, templateSegment{generator: gen, name: name})
+			if !seen[name] {
+				seen[name] = true
+				t.placeholders = append(t.placeholders, name)
+			}
 		}
 
 		remaining = remaining[closeIdx+2:]
@@ -167,6 +182,14 @@ func (t *Template) Placeholders() []string {
 // evaluating every placeholder generator. If no placeholders exist,
 // it returns the original raw string without any allocation.
 func (t *Template) Render(requestIndex int) string {
+	return t.RenderWithVars(requestIndex, nil)
+}
+
+// RenderWithVars generates a concrete string for the given request index,
+// resolving both $generator placeholders and .varName variable lookups.
+// The vars map provides values for {{.varName}} placeholders. If a variable
+// is not found in the map, it is rendered as an empty string.
+func (t *Template) RenderWithVars(requestIndex int, vars map[string]string) string {
 	if !t.HasPlaceholders() {
 		return t.raw
 	}
@@ -177,7 +200,11 @@ func (t *Template) Render(requestIndex int) string {
 
 	for i := range t.segments {
 		seg := &t.segments[i]
-		if seg.generator != nil {
+		if seg.varName != "" {
+			if vars != nil {
+				b.WriteString(vars[seg.varName])
+			}
+		} else if seg.generator != nil {
 			b.WriteString(seg.generator(requestIndex))
 		} else {
 			b.WriteString(seg.staticText)
